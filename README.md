@@ -28,4 +28,4 @@ train_sporb_fbow [options] -s <sphorb_path> -o <output.fbow> <dir1> [dir2 ...]
 | `-v, --verbose` | off | Enable verbose output during training. |
 
 # Example
-We provide the `output.fbow` file trained on [RflyPano](https://ojs.aaai.org/index.php/AAAI/article/view/38884), [360DVO](https://arxiv.org/abs/2601.02309), and [CVPG](https://link.springer.com/article/10.1007/s11760-021-02003-3) datasets ($k=10, L=6$) with 158,790 panoramic images ($1920\times 640$).
+We provide the `vocab.fbow` file trained on [RflyPano](https://ojs.aaai.org/index.php/AAAI/article/view/38884), [360DVO](https://arxiv.org/abs/2601.02309), and [CVPG](https://link.springer.com/article/10.1007/s11760-021-02003-3) datasets ($k=10, L=6$) with 158,790 panoramic images ($1920\times 640$).
