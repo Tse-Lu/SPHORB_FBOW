@@ -23,8 +23,8 @@ train_sporb_fbow [options] -s <sphorb_path> -o <output.fbow> <dir1> [dir2 ...]
 | `-k <int>` | 10 | Branching factor (number of children per node). |
 | `-l <int>` | 6 | Maximum tree depth. Total vocabulary size ≈ k^L. |
 | `-t <int>` | 1 | Number of threads for parallel clustering. |
-| `-n <int>` | 500 | Maximum number of keypoints to retain per image. |
-| `--max-iters <int>` | 0 | Maximum K-means iterations. 0 = use random centers without iteration (fast, nearly as good). |
+| `-n <int>` | 1000 | Maximum number of keypoints to retain per image. |
+| `--max-iters <int>` | 5 | Maximum K-means iterations. 0 = use random centers without iteration (fast, nearly as good). |
 | `-v, --verbose` | off | Enable verbose output during training. |
 
 # Example

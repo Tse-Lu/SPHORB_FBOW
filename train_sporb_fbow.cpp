@@ -89,20 +89,20 @@ usage:
         std::cerr << "  -k <int>                Branching factor (default: 10)\n";
         std::cerr << "  -l <int>                Depth levels (default: 6)\n";
         std::cerr << "  -t <int>                Number of threads (default: 1)\n";
-        std::cerr << "  -n <int>                Max features per image (default: 500)\n";
-        std::cerr << "  --max-iters <int>       Max k-means iterations, 0 = random centers (default: 0)\n";
+        std::cerr << "  -n <int>                Max features per image (default: 1000)\n";
+        std::cerr << "  --max-iters <int>       Max k-means iterations, 0 = random centers (default: 5)\n";
         std::cerr << "  -v, --verbose           Verbose output\n";
         std::cerr << "  -h, --help              Show this help\n\n";
         std::cerr << "Examples:\n";
         std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow ./pano_images/\n";
-        std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow -k 10 -l 5 -t 8 -n 1500 ./city/ ./campus/ ./indoor/\n";
+        std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow -k 10 -l 5 -t 8 -n 1000 --max-iters 5 ./city/ ./campus/\n";
         return 1;
     }
 
     std::vector<std::string> imageDirs;
     std::string sphorbPath;
     std::string outputPath;
-    int k = 10, L = 6, nthreads = 1, maxIters = 0, nfeatures = 500;
+    int k = 10, L = 6, nthreads = 1, maxIters = 5, nfeatures = 1000;
     bool verbose = false;
 
     int i = 1;
