@@ -14,8 +14,9 @@
  *   -k <int>                Branching factor (default: 10)
  *   -l <int>                Depth levels (default: 6)
  *   -t <int>                Number of threads (default: 1)
- *   -n <int>                Max features per image (default: 500)
- *   --max-iters <int>       Max k-means iterations, 0 = random centers only (default: 0)
+ *   -n <int>                Max features per image (default: 1000)
+ *   --max-iters <int>       Max k-means iterations, 0 = random centers (default: 5)
+ *   -a <int>                Augmented rotations per image (default: 0)
  *   -v, --verbose           Verbose output
  *   -h, --help              Show this help
  */
@@ -28,6 +29,8 @@
 #include <algorithm>
 #include <chrono>
 #include <set>
+#include <cmath>
+#include <random>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -76,6 +79,65 @@ static void collectImages(const std::string &dir, std::vector<std::string> &file
     closedir(dp);
 }
 
+// Rotate an equirectangular panoramic image.
+// roll/pitch/yaw in radians.  R = Rz(yaw) * Ry(pitch) * Rx(roll).
+static cv::Mat rotateEquirectangular(const cv::Mat &src,
+                                     double roll_rad, double pitch_rad, double yaw_rad)
+{
+    int w = src.cols, h = src.rows;
+    cv::Mat map_x(h, w, CV_32F), map_y(h, w, CV_32F);
+
+    double cr = cos(roll_rad),  sr = sin(roll_rad);
+    double cp = cos(pitch_rad), sp = sin(pitch_rad);
+    double cy = cos(yaw_rad),   sy = sin(yaw_rad);
+
+    // Inverse rotation matrix  Rt = Rx^T * Ry^T * Rz^T
+    double rt00 =  cy * cp;
+    double rt01 = -sy * cp;
+    double rt02 =  sp;
+    double rt10 =  sy * cr + cy * sp * sr;
+    double rt11 =  cy * cr - sy * sp * sr;
+    double rt12 = -cp * sr;
+    double rt20 =  sy * sr - cy * sp * cr;
+    double rt21 =  cy * sr + sy * sp * cr;
+    double rt22 =  cp * cr;
+
+    for (int y = 0; y < h; y++) {
+        float *mx = map_x.ptr<float>(y);
+        float *my = map_y.ptr<float>(y);
+        for (int x = 0; x < w; x++) {
+            double lon = (double(x) / w - 0.5) * 2.0 * M_PI;
+            double lat = (0.5 - double(y) / h) * M_PI;
+            double cl = cos(lat);
+            double vx = cl * cos(lon);
+            double vy = cl * sin(lon);
+            double vz = sin(lat);
+
+            // Apply inverse rotation
+            double sx = rt00 * vx + rt01 * vy + rt02 * vz;
+            double sy = rt10 * vx + rt11 * vy + rt12 * vz;
+            double sz = rt20 * vx + rt21 * vy + rt22 * vz;
+
+            double src_lon = atan2(sy, sx);
+            double src_lat = asin(std::max(-1.0, std::min(1.0, (double)sz)));
+
+            // Wrap longitude
+            while (src_lon < -M_PI) src_lon += 2.0 * M_PI;
+            while (src_lon >  M_PI) src_lon -= 2.0 * M_PI;
+            // Clamp latitude
+            if (src_lat >  M_PI / 2.0) src_lat =  M_PI / 2.0;
+            if (src_lat < -M_PI / 2.0) src_lat = -M_PI / 2.0;
+
+            mx[x] = float((src_lon / (2.0 * M_PI) + 0.5) * w);
+            my[x] = float((0.5 - src_lat / M_PI) * h);
+        }
+    }
+
+    cv::Mat dst;
+    cv::remap(src, dst, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0));
+    return dst;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
 usage:
@@ -91,11 +153,12 @@ usage:
         std::cerr << "  -t <int>                Number of threads (default: 1)\n";
         std::cerr << "  -n <int>                Max features per image (default: 1000)\n";
         std::cerr << "  --max-iters <int>       Max k-means iterations, 0 = random centers (default: 5)\n";
+        std::cerr << "  -a <int>                Augmented rotations per image (default: 0)\n";
         std::cerr << "  -v, --verbose           Verbose output\n";
         std::cerr << "  -h, --help              Show this help\n\n";
         std::cerr << "Examples:\n";
         std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow ./pano_images/\n";
-        std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow -k 10 -l 5 -t 8 -n 1000 --max-iters 5 ./city/ ./campus/\n";
+        std::cerr << "  " << argv[0] << " -s ./SPHORB/ -o vocab.fbow -k 10 -l 5 -t 8 -n 1000 -a 3 ./city/ ./campus/\n";
         return 1;
     }
 
@@ -103,6 +166,7 @@ usage:
     std::string sphorbPath;
     std::string outputPath;
     int k = 10, L = 6, nthreads = 1, maxIters = 5, nfeatures = 1000;
+    int augment = 0;
     bool verbose = false;
 
     int i = 1;
@@ -129,6 +193,9 @@ usage:
         } else if (arg == "-n") {
             if (i + 1 < argc) nfeatures = std::stoi(argv[++i]);
             else { std::cerr << "Error: -n requires an integer." << std::endl; return 1; }
+        } else if (arg == "-a") {
+            if (i + 1 < argc) augment = std::stoi(argv[++i]);
+            else { std::cerr << "Error: -a requires an integer." << std::endl; return 1; }
         } else if (arg == "--max-iters") {
             if (i + 1 < argc) maxIters = std::stoi(argv[++i]);
             else { std::cerr << "Error: --max-iters requires an integer." << std::endl; return 1; }
@@ -138,7 +205,6 @@ usage:
             std::cerr << "Error: unknown option '" << arg << "'." << std::endl;
             return 1;
         } else {
-            // Positional argument -- image directory.
             imageDirs.push_back(arg);
         }
         ++i;
@@ -168,7 +234,7 @@ usage:
     }
 
     // Verify image directories and collect images.
-    std::set<std::string> imageSet;  // deduplicate by full path
+    std::set<std::string> imageSet;
     for (const auto &dir : imageDirs) {
         struct stat st;
         if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
@@ -188,7 +254,9 @@ usage:
         std::cerr << "Error: no images found in the given directories." << std::endl;
         return 1;
     }
-    std::cout << "Total images: " << images.size() << std::endl;
+    std::cout << "Total images: " << images.size()
+              << (augment > 0 ? " (x" + std::to_string(augment + 1) + " with augment)" : "")
+              << std::endl;
 
     // Create SPHORB detector.
     std::cout << "Initializing SPHORB detector (nfeatures=" << nfeatures << ")..." << std::endl;
@@ -196,10 +264,18 @@ usage:
     std::cout << "  Descriptor size: " << sphorb.descriptorSize() << " bytes ("
               << sphorb.descriptorSize() * 8 << " bits)" << std::endl;
 
+    // Rotation ranges (matching the Python reference)
+    const double roll_min  = -M_PI / 6, roll_max  = M_PI / 6;    // ±30°
+    const double pitch_min = -M_PI / 6, pitch_max = M_PI / 6;    // ±30°
+    const double yaw_min   = -M_PI / 3, yaw_max   = M_PI / 3;    // ±60°
+
+    srand(0);
+
     // Extract features from all images.
     std::vector<cv::Mat> allFeatures;
     size_t totalKeypoints = 0;
     size_t skipped = 0;
+    size_t augmentProcessed = 0;
 
     for (size_t idx = 0; idx < images.size(); ++idx) {
         std::cout << "[" << (idx + 1) << "/" << images.size() << "] "
@@ -212,26 +288,47 @@ usage:
             continue;
         }
 
-        // SPHORB works on equirectangular panoramic images. Typical sizes are
-        // 2000x1000 or similar (width = 2 * height). Warn if aspect ratio
-        // deviates significantly.
         double aspect = static_cast<double>(img.cols) / img.rows;
         if (aspect < 1.5 || aspect > 2.5) {
             std::cerr << "  WARNING: image aspect ratio is " << aspect
                       << " (panoramas usually ~2:1). Results may be suboptimal." << std::endl;
         }
 
-        std::vector<cv::KeyPoint> keypoints;
-        cv::Mat descriptors;
-        // Use operator() directly instead of detectAndCompute() because
-        // OpenCV 4 checks Feature2D::empty() which SPHORB does not override.
-        sphorb(img, cv::noArray(), keypoints, descriptors);
+        // Process original image
+        {
+            std::vector<cv::KeyPoint> keypoints;
+            cv::Mat descriptors;
+            sphorb(img, cv::noArray(), keypoints, descriptors);
 
-        if (!descriptors.empty()) {
-            allFeatures.push_back(descriptors.clone());
-            totalKeypoints += keypoints.size();
+            if (!descriptors.empty()) {
+                allFeatures.push_back(descriptors.clone());
+                totalKeypoints += keypoints.size();
+            }
+            // std::cout << "  orig: " << keypoints.size() << " keypoints" << std::endl;
         }
-        std::cout << "  " << keypoints.size() << " keypoints extracted" << std::endl;
+
+        // Process augmented rotations
+        for (int aug = 0; aug < augment; ++aug) {
+            double roll  = roll_min  + (rand() / double(RAND_MAX)) * (roll_max - roll_min);
+            double pitch = pitch_min + (rand() / double(RAND_MAX)) * (pitch_max - pitch_min);
+            double yaw   = yaw_min   + (rand() / double(RAND_MAX)) * (yaw_max - yaw_min);
+
+            cv::Mat rotated = rotateEquirectangular(img, roll, pitch, yaw);
+
+            std::vector<cv::KeyPoint> keypoints;
+            cv::Mat descriptors;
+            sphorb(rotated, cv::noArray(), keypoints, descriptors);
+
+            if (!descriptors.empty()) {
+                allFeatures.push_back(descriptors.clone());
+                totalKeypoints += keypoints.size();
+            }
+            // std::cout << "  aug" << aug << ": " << keypoints.size()
+            //           << " kps  (roll=" << int(roll * 180.0 / M_PI)
+            //           << " pitch=" << int(pitch * 180.0 / M_PI)
+            //           << " yaw=" << int(yaw * 180.0 / M_PI) << ")" << std::endl;
+            ++augmentProcessed;
+        }
     }
 
     if (allFeatures.empty()) {
@@ -239,17 +336,20 @@ usage:
         return 1;
     }
 
+    size_t imgsProcessed = images.size() - skipped;
     std::cout << "\nSummary:\n";
-    std::cout << "  Images processed:  " << (images.size() - skipped) << "/" << images.size() << std::endl;
-    std::cout << "  Total keypoints:   " << totalKeypoints << std::endl;
-    std::cout << "  Avg keypoints/img: " << (totalKeypoints / (images.size() - skipped)) << std::endl;
+    std::cout << "  Original images processed: " << imgsProcessed << "/" << images.size() << std::endl;
+    std::cout << "  Augmented images processed: " << augmentProcessed << std::endl;
+    std::cout << "  Total feature matrices:   " << allFeatures.size() << std::endl;
+    std::cout << "  Total keypoints:          " << totalKeypoints << std::endl;
+    std::cout << "  Avg kps per extraction:   " << (totalKeypoints / allFeatures.size()) << std::endl;
 
     // Verify descriptor consistency across images.
     {
         int expectedCols = allFeatures[0].cols;
         int expectedType = allFeatures[0].type();
-        for (size_t idx = 1; idx < allFeatures.size(); ++idx) {
-            if (allFeatures[idx].cols != expectedCols || allFeatures[idx].type() != expectedType) {
+        for (size_t j = 1; j < allFeatures.size(); ++j) {
+            if (allFeatures[j].cols != expectedCols || allFeatures[j].type() != expectedType) {
                 std::cerr << "Error: inconsistent descriptor dimensions across images." << std::endl;
                 return 1;
             }
@@ -263,8 +363,6 @@ usage:
     params.nthreads = nthreads;
     params.maxIters = maxIters;
     params.verbose  = verbose;
-
-    srand(0);
 
     long long expectedWords = 1;
     for (int j = 0; j < L; ++j) expectedWords *= k;
@@ -285,7 +383,6 @@ usage:
     std::cout << "Training done in " << ms / 1000.0 << " s" << std::endl;
     std::cout << "Vocabulary blocks: " << voc.size() << std::endl;
 
-    // Save vocabulary to file.
     voc.saveToFile(outputPath);
     std::cout << "Vocabulary saved to " << outputPath << std::endl;
 
